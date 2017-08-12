@@ -1,0 +1,148 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Dan Johnson"
+date: "August 7, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+## Data
+
+The training data for this project are available here: 
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+Note - much of the data has blanks, NULLs or 'NA' in the field.  These items were changed to NA upon loading of the data.
+
+
+```{r}
+trainData <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", na.strings = c("", "NA", "#DIV/0!"))
+dim(trainData)
+
+testData <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", na.strings = c("", "NA", "#DIV/0!"))
+dim(testData)
+```
+
+
+There are also some columns that we simply don't need for this analysis.  We'll remove those first.
+
+Columns manually removed (1-7 in original data.frame):
+
+1. X
+2. user_name
+3. raw_timestamp_1
+4. raw_timestamp_2
+5. cvtd_timestamp
+6. new_window
+7. num_window
+
+At the same time, let's get rid of those pesky NA valued columns.
+
+```{r}
+trainData <- trainData[,colSums(is.na(trainData))==0]
+trainData <- trainData[,-c(1:7)]
+dim(trainData)
+
+testData <- testData[,colSums(is.na(testData))==0]
+testData <- testData[,-c(1:7)]
+dim(testData)
+```
+
+That kocked things down a bit; from 160 columns to 53.  Let's start getting our data setup for training, cross validation (test data from train data) and final test data (20 items).
+
+
+## PreProcessing
+
+Appears that the test data item is the final 20 row item that we will use to test once we have trained and tested, using cross-validation, in our model.  Let's go through and divide the original train data into a 60/40 split.
+
+```{r}
+library(caret, quietly = TRUE)
+set.seed(777)
+subSamples <- createDataPartition(y=trainData$classe, p=0.6, list = FALSE)
+subTrainData <- trainData[subSamples,]
+subTestData <- trainData[-subSamples,]
+
+dim(subTrainData)
+dim(subTestData)
+
+```
+
+## Check Predicted Values
+
+Let's make sure that we have good representation of the predicted value in our subTrainData and subTestData an that we aren't overweighted or imbalanced in the predictor value, classe.
+
+```{r}
+library(ggplot2, quietly = TRUE)
+plot(subTrainData$classe, col = "blue", main = "subTrainData classe Frequency", xlab = "Classe Levels", ylab = "Frequency")
+
+plot(subTestData$classe, col = "green", main = "subTestData classe Frequency", xlab = "Classe Levels", ylab = "Frequency")
+
+```
+
+Both datasets appear to have good representation across the 5 classes, even if classe = A has a bit higher frequency.  Now we're ready to do some modeling!
+
+## Models
+
+Going to create three models and then assess which one should be used for the final predictive model.
+
+```{r}
+library(MASS, quietly = TRUE)
+library(randomForest, quietly = TRUE)
+library(gbm, quietly = TRUE)
+library(plyr, quietly = TRUE)
+
+# Have to add some items to get Random Forest to run quickly
+rfControl <- trainControl(method = "none", number = 1, repeats = 1)
+
+modLDA <- train(classe ~ ., data = subTrainData, method = "lda")
+modGBM <- train(classe ~ ., data = subTrainData, method = "gbm", trControl = rfControl)
+modRF <- train(classe ~ ., data = subTrainData, method = "rf", ntree=100, trControl = rfControl)
+
+predLDA <- predict(modLDA, newdata = subTestData)
+predGBM <- predict(modGBM, newdata = subTestData)
+predRF <- predict(modRF, newdata = subTestData)
+```
+
+### Cross Validate Latent Dirichlet Allocation (LDA) Model
+
+```{r}
+confusionMatrix(predLDA, subTestData$classe)
+```
+
+Initial LDA model is ~70% efficient, with an Out of Sample error of .2925 (29.25%).  Let's hope that some of the additional models are better.
+
+### Cross Validate Gradient Boost Model (GBM)
+
+```{r}
+confusionMatrix(predGBM, subTestData$classe)
+```
+
+The GBM model did slighty better with ~73% accuracy and Out of Sample error of .2651 (26.51%).  Let's hope our Random Forest model will be much more accurate for the remaining 20 items to test.
+
+### Cross Validate Random Forest (RF) Model
+
+```{r}
+confusionMatrix(predRF, subTestData$classe)
+```
+
+~99% accurate, with a .0089 or 0.89% Out of Sample error!  Note that even with the limited parameters I had used in the 'train' logic, this is still pretty good accuracy.
+
+## Decision
+
+I'm going to use the RandomForest model to test the last 20 items from the original test data we downloaded.
+
+```{r}
+final <- predict(modRF, testData)
+final
+```
